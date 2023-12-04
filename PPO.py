@@ -6,11 +6,11 @@ import torch as th
 from gym import spaces
 from torch.nn import functional as F
 
-from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
-from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
+from on_policy_algorithm import OnPolicyAlgorithm
+from policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
-
+from stable_baselines3.common.preprocessing import preprocess_obs
 
 class PPO(OnPolicyAlgorithm):
     """
@@ -98,6 +98,7 @@ class PPO(OnPolicyAlgorithm):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
         annealing = False,
+        intrins_reward = False
     ):
 
         super(PPO, self).__init__(
@@ -125,8 +126,9 @@ class PPO(OnPolicyAlgorithm):
                 spaces.MultiDiscrete,
                 spaces.MultiBinary,
             ),
+            intrins_reward = intrins_reward
         )
-
+        
         # Sanity check, otherwise it will lead to noisy gradient and NaN
         # because of the advantage normalization
         if normalize_advantage:
@@ -194,10 +196,11 @@ class PPO(OnPolicyAlgorithm):
 
         entropy_losses = []
         pg_losses, value_losses = [], []
+        value_intrins_losses = []
         clip_fractions = []
 
         continue_training = True
-
+        
         # train for n_epochs epochs
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
@@ -212,19 +215,23 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, values_intrins, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
                 values = values.flatten()
+                values_intrins = values_intrins.flatten()
+                
                 # Normalize advantage
                 advantages = rollout_data.advantages
+                advantages_intrins = rollout_data.advantages_intrins
                 if self.normalize_advantage:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                    advantages_intrins = (advantages_intrins - advantages_intrins.mean()) / (advantages_intrins.std() + 1e-8)
 
                 # ratio between old and new policy, should be one at the first iteration
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
 
                 # clipped surrogate loss
-                policy_loss_1 = advantages * ratio
-                policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
+                policy_loss_1 = (advantages+ 0.5*advantages_intrins) * ratio
+                policy_loss_2 = (advantages+ 0.5*advantages_intrins) * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
                 # Logging
@@ -235,15 +242,22 @@ class PPO(OnPolicyAlgorithm):
                 if self.clip_range_vf is None:
                     # No clipping
                     values_pred = values
+                    values_intrins_pred = values_intrins
                 else:
                     # Clip the different between old and new value
                     # NOTE: this depends on the reward scaling
                     values_pred = rollout_data.old_values + th.clamp(
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
+                    values_intrins_pred = rollout_data.old_values_intrins + th.clamp(
+                        values_intrins - rollout_data.old_values_intrins, -clip_range_vf, clip_range_vf
+                    )
                 # Value loss using the TD(gae_lambda) target
                 value_loss = F.mse_loss(rollout_data.returns, values_pred)
+                value_intrins_loss = F.mse_loss(rollout_data.returns_intrins, values_intrins_pred)
+                
                 value_losses.append(value_loss.item())
+                value_intrins_losses.append(value_intrins_loss.item())
 
                 # Entropy loss favor exploration
                 if entropy is None:
@@ -254,7 +268,7 @@ class PPO(OnPolicyAlgorithm):
 
                 entropy_losses.append(entropy_loss.item())
 
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * (value_loss + value_intrins_loss)
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -278,8 +292,12 @@ class PPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
+                if self.intrins_reward:
+                    self.dist_network.train(preprocess_obs( rollout_data.observations, self.env.observation_space, normalize_images=True))
+                
             if self.annealing:
                 scheduler.step()
+            
             if not continue_training:
                 break
 

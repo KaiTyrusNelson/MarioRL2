@@ -8,6 +8,8 @@ from gym_super_mario_bros.actions import COMPLEX_MOVEMENT
 from gym_super_mario_bros.actions import RIGHT_ONLY
 import gym
 
+from stable_baselines3.common.preprocessing import preprocess_obs
+
 '''
 Additional
 '''
@@ -24,15 +26,15 @@ from torch import nn
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from runstats import Statistics
-from networks import MarioNet
-
+from networks import MarioNet, MarioNet2, MarioNet3
+from rewards_change import YPosBenefitWrapper, ScoreBenefitWrapper, RewardClip
 from pathlib import Path
 import datetime
 from pytz import timezone
 
 # Model Param
 CHECK_FREQ_NUMB = 10000
-TOTAL_TIMESTEP_NUMB = 5000000
+TOTAL_TIMESTEP_NUMB = 500000
 LEARNING_RATE = 0.0001
 GAE = 1.0
 ENT_COEF = 0.01
@@ -45,32 +47,19 @@ N_EPOCHS = 10
 EPISODE_NUMBERS = 20
 MAX_TIMESTEP_TEST = 1000
 
-STAGE_NAME = 'SuperMarioBros-1-1-v3'
+STAGE_NAME = 'SuperMarioBrosRandomStages-v3'
+TRAIN_STAGES = [
+    '1-1'
+]
 MOVEMENT = [['left', 'A'], ['right', 'B'], ['right', 'A', 'B']]
 
 import sys
 
 
-def train(save_dir, 
-          activation_function = th.nn.ReLU,
-          orthagonal_init = False,
-          grad_norm = sys.float_info.max, value_clip = None, reward_scaling = False, annealing = False):
-
-
-    policy_kwargs = dict(
-        features_extractor_class=MarioNet,
-        features_extractor_kwargs=dict(features_dim=512),
-        activation_fn = activation_function,
-        squash_output = False if activation_function is th.nn.Tanh else True,
-        ortho_init = orthagonal_init
-    )
-    
-    env = gym_super_mario_bros.make(STAGE_NAME)
+def get_env():
+    env = gym.make(STAGE_NAME)
     env = JoypadSpace(env, MOVEMENT)
     env = CustomRewardAndDoneEnv(env)
-    
-    if reward_scaling:
-        env = RewardScalingWrapper(env)
             
     env = SkipFrame(env, skip=4)
     env = GrayScaleObservation(env, keep_dim=True)
@@ -78,7 +67,49 @@ def train(save_dir,
     env = DummyVecEnv([lambda: env])
     env = VecFrameStack(env, 4, channels_order='last')
 
+    return env
+def train(save_dir, 
+          activation_function = th.nn.ReLU,
+          orthagonal_init = False,
+          grad_norm = sys.float_info.max, value_clip = None, annealing = False, intrins_reward = False,
+        feature_extractor = 1, reward_clip = None,
+         arch = [32, 32], reward_scheme = "regular"):
 
+    if feature_extractor == 1:
+        extractor = MarioNet
+    elif feature_extractor == 2:
+        extractor = MarioNet2
+    elif feature_extractor == 3:
+        extractor = MarioNet3
+        
+    print('Setting up env...')
+    policy_kwargs = dict(
+        features_extractor_class=extractor,
+        features_extractor_kwargs=dict(features_dim=512),
+        activation_fn = activation_function,
+        squash_output = False if activation_function is th.nn.Tanh else True,
+        ortho_init = orthagonal_init,
+        net_arch = arch,
+    )
+    
+    env = gym.make(STAGE_NAME , stages = TRAIN_STAGES)
+    env = JoypadSpace(env, MOVEMENT)
+
+    if reward_scheme == "regular":
+        env = CustomRewardAndDoneEnv(env)
+    elif reward_scheme == "y":
+        env = YPosBenefitWrapper(env)
+    elif reward_scheme == "score":
+        env = ScoreBenefitWrapper(env)
+
+    if reward_clip is not None:
+        env = RewardClip(env, clip_value = reward_clip)
+            
+    env = SkipFrame(env, skip=4)
+    env = GrayScaleObservation(env, keep_dim=True)
+    env = ResizeEnv(env, size=84)
+    env = DummyVecEnv([lambda: env])
+    env = VecFrameStack(env, 4, channels_order='last')
 
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok = True)
@@ -86,11 +117,13 @@ def train(save_dir,
 
     callback = TrainAndLoggingCallback(check_freq=CHECK_FREQ_NUMB, save_path=save_dir, env = env, reward_log_path = reward_log_path)
 
+    print('Setting up model...')
     model = PPO('CnnPolicy', env, verbose=0, policy_kwargs=policy_kwargs, 
                 tensorboard_log=save_dir, learning_rate=LEARNING_RATE, n_steps=N_STEPS,
                 batch_size=BATCH_SIZE, n_epochs=N_EPOCHS, gamma=GAMMA, gae_lambda=GAE, 
-                ent_coef=ENT_COEF, clip_range_vf = value_clip, max_grad_norm = grad_norm, annealing = annealing)
-    
+                ent_coef=ENT_COEF, clip_range_vf = value_clip, max_grad_norm = grad_norm, annealing = annealing, intrins_reward = intrins_reward)
+
+    print('Training model...')
     model.learn(total_timesteps=TOTAL_TIMESTEP_NUMB, callback=callback)
     
 class SkipFrame(gym.Wrapper):
@@ -122,6 +155,7 @@ class ResizeEnv(gym.ObservationWrapper):
         if frame.ndim == 2:
             frame = frame[:,:,None]
         return frame
+
 
 class CustomRewardAndDoneEnv(gym.Wrapper):
     def __init__(self, env=None):
@@ -188,7 +222,10 @@ class TrainAndLoggingCallback(BaseCallback):
             model_path = (self.save_path / 'best_model_{}'.format(self.n_calls))
             self.model.save(model_path)
 
+            print(type(self.model))
+
             total_reward = [0] * EPISODE_NUMBERS
+            total_intrins_reward = [0] * EPISODE_NUMBERS
             total_time = [0] * EPISODE_NUMBERS
             best_reward = 0
 
@@ -200,6 +237,13 @@ class TrainAndLoggingCallback(BaseCallback):
                 while not done and total_time[i] < MAX_TIMESTEP_TEST:
                     action, _ = self.model.predict(state)
                     state, reward, done, info = self.env.step(action)
+
+                    '''
+                    intrins_reward[i] += self.model.dist_network( preprocess_obs( th.from_numpy(state), 
+                                       self.env.observation_space, 
+                                       normalize_images=True) )
+                    '''
+                    
                     total_reward[i] += reward[0]
                     total_time[i] += 1
 
