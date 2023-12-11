@@ -14,6 +14,8 @@ Please note that the libraries we are using are old. You need to proper wheels f
 ### Training
 Training can be done via Training.ipnyb. Each of the cells cooresponds to a certain type of model, with specified heuristics. To run this notebook, please make sure to download the correct version of the necessary libraries as specificied in the bottom of this file.
 
+Within the file, you will see examples of the function, which use each of the heuristics. To use all heuristics, use the bottom-most cell to train model "FinalModelVC". This is a model which uses all the heuristic methods, and trains on all of the training set levels.
+
 ### Evaluation
 Evaluation of the pretrained models can be done via the Evaluation.ipnyb notebook. This contains basic scripts for plotting results and recording videos. 
 It currently is set up for pretrained models, but can be used for any model. Some pretrained models are available in this repository.
