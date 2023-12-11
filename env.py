@@ -34,7 +34,7 @@ from pytz import timezone
 
 # Model Param
 CHECK_FREQ_NUMB = 10000
-TOTAL_TIMESTEP_NUMB = 500000
+TOTAL_TIMESTEP_NUMB = 10000000
 LEARNING_RATE = 0.0001
 GAE = 1.0
 ENT_COEF = 0.01
@@ -47,19 +47,23 @@ N_EPOCHS = 10
 EPISODE_NUMBERS = 20
 MAX_TIMESTEP_TEST = 1000
 
-STAGE_NAME = 'SuperMarioBrosRandomStages-v3'
-TRAIN_STAGES = [
-    '1-1'
-]
+STAGE_NAME = 'SuperMarioBrosRandomStages-v1'
+
+TRAIN_STAGE_FULL = ['1-1', '1-2','1-4', '2-1', '2-4', '3-1', '3-2', '3-4', '4-1', '4-2', '4-4', '5-1', '5-2', '5-4','6-1', '6-2','6-4', '7-1', '7-4', ]
+VAL_STAGE_FULL = ['8-1', '8-2', '8-3', '8-4']
+TRAIN_STAGE_REDUCED = ['1-1','1-2','1-4']
+VAL_STAGE_REDUCED = ['1-1']
+
 MOVEMENT = [['left', 'A'], ['right', 'B'], ['right', 'A', 'B']]
 
 import sys
 
-
-def get_env():
-    env = gym.make(STAGE_NAME)
+def get_env(train_stages= ['1-1'], reward_clip = None, stage_name = 'SuperMarioBrosRandomStages-v1'):
+    env = gym.make(stage_name , stages = train_stages)
     env = JoypadSpace(env, MOVEMENT)
-    env = CustomRewardAndDoneEnv(env)
+    env= CustomRewardAndDoneEnv(env)
+    if reward_clip is not None:
+        env = RewardClip(env, clip_value = reward_clip)
             
     env = SkipFrame(env, skip=4)
     env = GrayScaleObservation(env, keep_dim=True)
@@ -68,12 +72,13 @@ def get_env():
     env = VecFrameStack(env, 4, channels_order='last')
 
     return env
-def train(save_dir, 
+
+def train(save_dir, train_stages= ['1-1', '1-2','1-4'],
           activation_function = th.nn.ReLU,
           orthagonal_init = False,
           grad_norm = sys.float_info.max, value_clip = None, annealing = False, intrins_reward = False,
         feature_extractor = 1, reward_clip = None,
-         arch = [32, 32], reward_scheme = "regular"):
+         arch = [32, 32], stage_name = 'SuperMarioBrosRandomStages-v1'):
 
     if feature_extractor == 1:
         extractor = MarioNet
@@ -92,24 +97,7 @@ def train(save_dir,
         net_arch = arch,
     )
     
-    env = gym.make(STAGE_NAME , stages = TRAIN_STAGES)
-    env = JoypadSpace(env, MOVEMENT)
-
-    if reward_scheme == "regular":
-        env = CustomRewardAndDoneEnv(env)
-    elif reward_scheme == "y":
-        env = YPosBenefitWrapper(env)
-    elif reward_scheme == "score":
-        env = ScoreBenefitWrapper(env)
-
-    if reward_clip is not None:
-        env = RewardClip(env, clip_value = reward_clip)
-            
-    env = SkipFrame(env, skip=4)
-    env = GrayScaleObservation(env, keep_dim=True)
-    env = ResizeEnv(env, size=84)
-    env = DummyVecEnv([lambda: env])
-    env = VecFrameStack(env, 4, channels_order='last')
+    env = get_env(train_stages, reward_clip = reward_clip, stage_name = stage_name)
 
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok = True)
