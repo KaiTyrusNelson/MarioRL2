@@ -4,6 +4,9 @@ MarioRL is an experiment of basic PPO improvements in the Super Mario Bros Envir
 
 VIDEO:
 
+[![Demo](https://i9.ytimg.com/vi/Xm55TjfA-bw/mqdefault.jpg?sqp=CPDQ2asG-oaymwEmCMACELQB8quKqQMa8AEB-AH-AYACkAGKAgwIABABGHIgRiguMA8=&rs=AOn4CLDViAyB3BsBlxRBpk3C_iMwZjOjOQ)](https://youtu.be/Xm55TjfA-bw?si=F2guDpNMy9GtOBdg&t=199)
+
+
 ### SETUP
 
 Please note that the libraries we are using are old. You need to proper wheels for installation to begin, which in itself can be a hassle. Python 3.8.1 seems to be the easiest version that can build all the libraries. Depenendencies will are installed in the described notebooks.
