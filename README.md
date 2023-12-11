@@ -4,7 +4,7 @@ MarioRL is an experiment of basic PPO improvements in the Super Mario Bros Envir
 
 VIDEO:
 
-[![Demo](https://i9.ytimg.com/vi/Xm55TjfA-bw/mqdefault.jpg?sqp=CPDQ2asG-oaymwEmCMACELQB8quKqQMa8AEB-AH-AYACkAGKAgwIABABGHIgRiguMA8=&rs=AOn4CLDViAyB3BsBlxRBpk3C_iMwZjOjOQ)](https://youtu.be/Xm55TjfA-bw?si=F2guDpNMy9GtOBdg&t=199)
+[![Demo](https://i9.ytimg.com/vi/Xm55TjfA-bw/mqdefault.jpg?sqp=CPDQ2asG-oaymwEmCMACELQB8quKqQMa8AEB-AH-AYACkAGKAgwIABABGHIgRiguMA8=&rs=AOn4CLDViAyB3BsBlxRBpk3C_iMwZjOjOQ)](https://youtu.be/Xm55TjfA-bw?si=F2guDpNMy9GtOBdg&t=209)
 
 
 ### SETUP
